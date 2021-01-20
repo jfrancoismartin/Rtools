@@ -506,17 +506,18 @@ matrixSamples <- function(imtx,ispl) {
 }
 
 
-moyByFactor <- function(imtx, ispl, subfact, oper) {
+moyByFactor <- function(imtx, ispl, subfact, onlyspl=TRUE, oper="mean") {
   
   ## imtx correspond to W4M data matrix : var in rows Id var in the first columns, samples in columns given by vector isample
   ## ispl correspond to W4M samples metadata : samples in rows (same as the columns of imtx data matrix)
-  ## The function computes the mean for each level of factor ifactor, present in the ispl metadata sample dataframe
+  ## The function computes the mean for each level of factor in column #subact, present in the ispl metadata sample dataframe
+  ## if onlyspl = TRUE, the average (or other) is computed only on samples defined as "sample" in the sampleType
   ## for each variables of which subscripts given in ivar vector) of the imtx dataframe.
   ## returns a data matrix of means with variales in rows and levels of factor in columns
   
   ## selection of biological sample sampleType=="sample"
   ## in the sampleMetadata ispl
-  ispl <- ispl[ispl$sampleType == "sample",]
+  if (onlyspl) {ispl <- ispl[ispl$sampleType == "sample",]}
   
   ## Selection of biological sample in the dataMatrix by merging with ispl
   varName <- colnames(imtx)[1]
@@ -548,7 +549,7 @@ moyByFactor <- function(imtx, ispl, subfact, oper) {
 }
 
 
-foldchange <- function(ids,reflev,collev=c(2:ncol(ids))) {
+foldchange <- function(ids,reflev,collev=c(2:ncol(ids)), fctype=c("log2","simple")[1]) {
   ## computes fold change between all levels of a factor 
   ## ids : an input dataframe with variables in rows and 
   ## id of variable in 1st column and average of the level of a factor in the other columns
@@ -557,20 +558,121 @@ foldchange <- function(ids,reflev,collev=c(2:ncol(ids))) {
   ## collev is a vector of subscript of the different columns of levels. 
   ## ids may contains others columns but after the id+columns of average
   ## So it is possible tu use this function for all the levels in successive runs
+  ## fold change by default is "log2 ratio" or "simple" numerator/denominator
   
-  nblev <- length(collev)
+  
   ireflev <- which(colnames(ids)==reflev)
-  
+  #collev <- collev[-which(collev==ireflev)]
+  nblev <- length(collev)
   foldch <- data.frame(array(NA,dim=c(nrow(ids),nblev)),stringsAsFactors = FALSE)
   colnames(foldch) <- paste(colnames(ids)[collev],"_vs_",reflev,sep="")
   rownames(foldch) <- ids[[1]]
-  for(i in 1:ncol(foldch)) foldch[i] <- ids[i+1]/ids[ireflev]
+  for(i in 1:ncol(foldch)) 
+    #if (fctype=="simple") foldch[i] <- ids[i+1]/ids[ireflev] else foldch[i] <- log2(ids[i+1]/ids[ireflev])
+    if (fctype=="simple") foldch[i] <- ids[collev[i]]/ids[ireflev] else foldch[i] <- log2(ids[collev[i]]/ids[ireflev])
   
-  resids <- cbind(ids,foldch)
+  #resids <- cbind(ids,foldch)
+  resids <- foldch
   
   return(resids)
   
 }
+
+ggplotOR <- function(ids,sNAME=2,sOR=3,mtit,stit="Odd Ratio") {
+  ## function to ggplot an Odd ratio in descending order 
+  ##  needs an input dataframe ids with at least 3 columns :
+  # - id in the first column
+  # - Name of the variable which is used on the plot (column sNAME) 
+  # - odd ratio (column sOR)
+  
+  ## sens define the color with a threshold for OR=1
+  sens <- ifelse(ids[[3]] < 1, yes="OR<1",no="OR>1") 
+  ids <- cbind(ids,sens)
+  ids <- ids[order(abs(ids[[3]])),]
+  colnames(ids)[3] <- "OR"
+  colnames(ids)[2] <- "name"
+  ids$name <- factor(ids$name, levels = ids$name) # convert to factor to retain sorted order in plot.
+  
+  ## ggplot of the foldchange
+  p <- ggplot(ids, aes(x=name, y=OR, label= OR)) + 
+    geom_bar(stat='identity', aes(fill=sens), width=.5)  +
+    labs(subtitle=stit,  title= mtit) + 
+    coord_flip()
+  
+  print(p)
+  
+}
+
+
+ggplotFC <- function(ids,labDEN,labNUM,sNAME,mtit,stit="log2 Fold change") {
+  ## function to ggplot a fold change (labNUM/labDEN) in descending order of absolute value
+  ## needs an input dataframe ids (var in rows and FC in columns) with all informations on average and FC
+  ## with at least 3 columns :
+  # - id in the first column
+  # - Name of the variable which is used on the plot
+  # - Fold change between labNUM/labDEM
+  
+  FC2plot <- paste(labNUM,"_vs_",labDEN,sep="")
+  sFC2plot <- which(colnames(ids)==FC2plot)
+  ids <- ids[,c(1,sNAME,sFC2plot)]
+  
+  mtitle <- paste(mtit,FC2plot, sep=" ")
+  
+  ## construct the name of the column to plot and then define his subscrip in log2FC
+  sens <- ifelse(ids[[3]] < 0, labDEN, labNUM) 
+  ids <- cbind(ids,sens)
+  ids <- ids[order(abs(ids[[3]])),]
+  colnames(ids)[3] <- "log2FC"
+  colnames(ids)[2] <- "name"
+  ids$name <- factor(ids$name, levels = ids$name) # convert to factor to retain sorted order in plot.
+  
+  ## ggplot of the foldchange
+  p <- ggplot(ids, aes(x=name, y=log2FC, label= log2FC)) + 
+    geom_bar(stat='identity', aes(fill=sens), width=.5)  +
+    #geom_text(aes(label = round(pvalue24h3DEM_vs_C,4)), nudge_y = 2) +
+    #scale_fill_manual(name="log2FC", labels = c(labDEN, labNUM), values = c(labDEN="green", labNUM="red")) +              
+    labs(subtitle=stit,  title= mtitle) + 
+    coord_flip()
+  
+  print(p)
+  
+}
+
+meanFCggplot <- function(VM,VMsel,DM,SPL,mfact,labDEN,labNUM,sNAME,mtit) {
+  
+  ## compute means of levels of factor mfact, then computes all the possible FC among levels of factor mfact
+  ## add these means and FC values to VM file and save it
+  ## Then between the chosen levels labNUM/labDEN for a selection of variable defined by the file VMsel
+  ## ggplot the fold change in descending order of the absolute values of FC
+  subfact <- which(colnames(SPL)==mfact)
+  moyDM <- moyByFactor(imtx=DM, ispl=SPL, subfact, onlyspl=TRUE, oper="mean") 
+  moyVM <- merge(x = VM, y =moyDM, by.x=1, by.y=1, all.x=TRUE, all.y=FALSE)
+  
+  # compute log2 fold change for all level = columns of moyVM corresponding to the means of the different levels
+  nlev <- ncol(x = moyDM) - 1
+  collev=c((ncol(moyVM)-nlev+1):ncol(moyVM))
+  lablev <- colnames(moyVM)[collev]
+  
+  ## for each level defined as denominator of FC, compute FC and store and write a txt file based on 
+  for (l in 1:nlev) {
+    FCDEN <- lablev[l]
+    FC <- foldchange(moyVM,reflev=FCDEN,collev, fctype="log2")
+    #subVM contains all the FC results for each level of the chosen factor mfact
+    moyVM <- cbind(moyVM,FC)
+    
+  }
+ 
+  ## for the mfact factor using 2 levels as Numerator and Denominator performs graphics of the fold change      
+  ## prepare dataframe for ploting. If exist 
+  if (!is.null(VMsel))  VMsel <- merge(x=VMsel, y=moyVM, by.x=1, by.y=1, all.x=TRUE, all.y=FALSE) else VMsel <- moyVM
+  
+  ggplotFC(ids=VMsel, labDEN=labDEN,labNUM=labNUM,sNAME=sNAME,mtit=mtit, stit="log2 Fold change")
+  
+  return(VMsel)
+  
+}
+
+
 
 parse_chemFormula <- function(formul, atom2search=c("C","H","O","N","S")) {
    ## function able to count the number of atom (defined by teh vector atom2search)
@@ -751,6 +853,71 @@ molobsfreq <- function(vmdata,dm, spl,nTimeBL=10, intThreshold=0,freqBy=0,iId=1)
    return(resFI)
 } 
 
+NA_replace <- function(DM,method=c("zero","randmin","halfmin")[2]) {
+  ## replace NA values in the dataMatrix by a random value between 0 and min(ions)
+  ## data matrix DM is supposed to have ions names in the first column
+  ## methods of replacement : 
+  ##  - "zero" : NA are replaced by 0
+  ##  - "randmin" : NA are replaced by a random value between 0 and min(ions)
+  ##  - "halfmin" : NA are replaced by min(ions)/2
+  
+  rownames(DM) <- DM[[1]]; IDvar <- colnames(DM)[1]
+  tDM <- data.frame(t(DM[,-1]), stringAsFactor =FALSE)
+  for (i in 1:ncol(tDM)) {
+    # iNA subscript of obs with NA 
+    iNA <- which(is.na(tDM[[i]]))
+    if (method=="randmin") {
+      # min value of the current ion is the minimum without NA values
+      minval <- min(tDM[-iNA,i])
+      tDM[iNA,i] <- runif(n=length(iNA),min=0, max=minval)
+    } 
+    else if (method=="halfmin") {
+      minval <- min(tDM[-iNA,i])
+      tDM[iNA,i] <- minval/2
+      
+    }
+    else {
+      ## for other method 0 replace NA
+      tDM[iNA,i] <- 0
+    }
+  }
+  DMnoNA <- t(tDM)
+  DMnoNA <- data.frame(row.names(DMnoNA),DMnoNA,stringsAsFactors = FALSE); colnames(DMnoNA)[1] <- IDvar
+  return(DMnoNA)
+}
+
+QCBL_filter <- function(VM,DM,spl, threshBL) {
+  ## filtration of ions based on QC/BL intensity (must be > thresBL)
+  ## this function aimed to filter the xtracted ions () for which QC/BL < threhBL
+  
+  ## First check if we have BL and QC or Sample 
+  splType <- as.character(levels(as.factor(spl$sampleType)))
+  spools <- which(splType == "pool")
+  ssamp <- which(splType == "sample")
+  sbl <- which(splType == "blank")
+  itype <- which(colnames(spl)=="sampleType")
+  
+  ## compute mean by sampleType
+  meanByType <- moyByFactor(imtx=DM,ispl = spl,subfact=itype,onlyspl=FALSE, oper="mean")
+  
+  ## ratio QC/BL average and set a filter 
+  QCBL <- meanByType$pool/meanByType$blank
+  QCBLfilter <- QCBL>threshBL
+  
+  ## merge ratio and filter to VM and DM
+  filterVM <- data.frame(cbind(meanByType,QCBL,QCBLfilter),stringsAsFactors = FALSE)
+  filterVM <- merge(x = VM, y=filterVM, by.x=1, by.y=1, all.x=TRUE, all.y=TRUE)  
+  filterVM <- filterVM[filterVM$QCBLfilter==TRUE ,]
+
+  filterDM <- data.frame(cbind(DM,QCBLfilter),stringsAsFactors = FALSE)
+  filterDM <- filterDM[filterDM$QCBLfilter==TRUE ,-ncol(filterDM)]
+  
+  ## a tester stopifnot("error VM and DM don't match",filterVM[[1]] != filterDM[[1]])
+  filterData <- list(filterVM,filterDM)
+  
+  return(filterData)
+}
+
 ########## extraction function for both neg ou pos ionisation
 ## pgen : general param common to both ionisation
 ## pioni: parameters with possibly different values for each ionisation
@@ -837,17 +1004,54 @@ xcms_xtract <- function(ioniUsed,pgen,pioni,spl,idmanip,repIoni) {
    ## list of features
    xf <- featureDefinitions(xdata)
    
+   ## CAMERA ####################################################################################
+   xs <- as(xdata, 'xcmsSet')
+   ## xs <- getxcmsSetObject(xdata)
+   #xsa <- xsAnnotate(xs,polarity =ioniUsed)
+   #Group after RT value of the xcms grouped peak
+   #xsaF <- groupFWHM(xsa, perfwhm=0.6)
+   #Verify grouping
+   #xsaC <- groupCorr(xsaF)
+   #Annotate isotopes, could be done before groupCorr
+   #xsaFI <- findIsotopes(xsaC)
+   #Annotate adducts
+   #xsaFA <- findAdducts(xsaFI, polarity=ioniUsed)
+   
+   
+   ###  OUUUUUUUUUUUUUUUUUUUUUUUUUUU A utiliser au lieu des 5 dernieres lignes de code
+   xsaFA <- annotate(xs, sample=NA, sigma=6, perfwhm=0.6,
+                      cor_eic_th=0.75, graphMethod="hcs", pval=0.05, calcCiS=TRUE,
+                      calcIso=FALSE, calcCaS=FALSE, maxcharge=3, maxiso=4, minfrac=0.5,
+                      ppm=pioni$ppm, mzabs=0.015, quick=FALSE, psg_list=NULL, rules=NULL,
+                      polarity=ioniUsed, multiplier=3, max_peaks=100 ,intval="maxo")
+   
+   
+   # Peaklist post CAMERA
+   xC <- (getPeaklist(xsaFA))
+   ions <- paste(substr(ioniUsed,1,1),round(xC$mz,4),"T",round((xC$rt/60),1),sep="")
+   xC <- data.frame(cbind(ions,xC$isotopes,xC$adduct,xC$pcgroup), stringsAsFactors = FALSE)
+   colnames(xC)[2:4] <- c("isotopes","adducts","pcgroup")
+   
    ## variable metadata
    ncr <- dim(xf)[2]-1
    ions <- paste(substr(ioniUsed,1,1),round(xf$mzmed,4),"T",round((xf$rtmed/60),1),sep="")
    VM <- data.frame(ions,xf[,c(1:ncr)])  
    
+   ## merge VM with CAMERA annotation results
+   VM <- merge(x=VM, y=xC, by.x=1, by.y=1, all.x=TRUE, all.y=TRUE)
+   
    ## data matrix
    ## default missing=NA but can be : missing = "rowmin_half"
    ## values = "into" or "maxo"
-   DM <- featureValues(xdata, value = "into")
+   DM <- featureValues(xdata, value = "maxo")
    colnames(DM) <- samples
-   DM <- data.frame(ions,DM)
+   DM <- data.frame(ions,DM,stringsAsFactors = FALSE)
+   
+   ## NA replace 
+   DM <- NA_replace(DM,method="randmin")
+   
+   #############################  F I L T r A T I O N QC/Blank > threshBL #################################
+   fildata <- QCBL_filter(VM,DM,spl,threshBL)
    
    ## write on disk
    tpuc <- data.frame(tpucl,tpuc)
