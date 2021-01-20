@@ -6,3 +6,4 @@ R functions and scripts for metabolomic workflow
 - mean by factor levels and fold change
 - parse chemical formula in atoms
 - CAll mixOmics DIABLO functions for multiblock analysis
+- computes and plot fold change and odd ratio
