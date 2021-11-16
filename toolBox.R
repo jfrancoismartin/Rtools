@@ -242,76 +242,6 @@ BoxHistDesign2 = function (ids, fact, firstvar,lastvar=dim(ids)[2]) {
 }
 
 
-comb.peaklist <- function(fili,fila,filres,labelMZ,labelRT,deltaMZ,deltaRT,indsa,action="drop")
-{ # fonction qui élimine (action="drop") les ions communs entre 2 fichiers (ex. samples et blancs)
-  # ou garde (action="keep") les ions communs et fusionnent les colonnes samples (ex. samples et QC)
-  # entre 2 fichiers (fili fila) et rajoute les valeurs 
-  # d'intensité du fichier "append" indice indsa au fichier "initial"
-  # permet par exemple d'éliminer les ions commun avec les blancs
-  # subscript mz and rt colums in the 2 inputs to merge 
-  indmzi<-which(dimnames(fili)[[2]]==labelMZ)
-  indrti<-which(dimnames(fili)[[2]]==labelRT)
-  fili <- fili[order(fili[[indrti]]),]
-  indmza<-which(dimnames(fila)[[2]]==labelMZ)
-  indrta<-which(dimnames(fila)[[2]]==labelRT)
-  fila <- fila[order(fila[[indrta]]),]
-  
-  maxcom=10*max(dim(fili)[1],dim(fila)[1])
-  common <- array(data=NA,dim=c(maxcom,8))
-  #specifi <- array(data=NA,dim=c(dim(fili)[1],dim(fili)[2]+(nbsampa))) # ions specifiques au fichier i(initial)
-  #specifa <- array(data=NA,dim=c(dim(fila)[1],dim(fili)[2]+(nbsampa))) # ions specifiques au fichier a(append)
-  k  <- 0 # indice d'ion commun dans l array resultat common
-  si <- 0 # indice d'ion specifique au fichier i(initial)
-  sa <- 0 # indice d'ion specifique au fichier a(append)
-  for (i in 1:dim(fili)[1]) {
-    for (j in 1:dim(fila)[1]) {
-      if (abs(fili[[indmzi]][i] - fila[[indmza]][j]) <= deltaMZ 
-          &
-            abs(fili[[indrti]][i] - fila[[indrta]][j]) <= deltaRT  ) {
-        k <- k+1; cat (k," ")
-        common[k,1]<-fili[[indmzi]][i]
-        common[k,2]<-fila[[indmza]][j]
-        ## delta de m/z exprime en ppm
-        common[k,3]<-1E07*(abs(fili[[indmzi]][i] - fila[[indmza]][j])/fili[[indmzi]][i])
-        common[k,4]<-fili[[indrti]][i]
-        common[k,5]<-fila[[indrta]][j]
-        common[k,6]<-abs(fili[[indrti]][i] - fila[[indrta]][j])
-        common[k,7]<-i
-        common[k,8]<-j
-      }
-      if (fila[[indrta]][j] - fili[[indrti]][i] > deltaRT) { break } #exit loop if rt fila greate than rt fili useless to continue loop
-    } 
-  }
-  if (action=="drop") {
-    common <- common[!is.na(common[,1]),]
-    out_i <- c(common[,7])
-    ## on elimine dans fili les ions communs a fili et fila and that's all
-    ions <- data.frame(paste(round(fili[[indmza]],digit=4),round(fili[[indrta]],digit=0),sep="T"))
-    dimnames(ions)[[2]][1] <- "ions"
-    fili <- data.frame(ions,fili)
-    filcor <- fili[-out_i,]
-
-  } else { # keep ce qui est commun et on merge les 2 series d'échantillons
-    common <- common[!is.na(common[,1]),]
-    out_i <- c(common[,7]) # indice des ions de fili communs aux 2 fichiers 
-    ## on garde dans fili seulement les ions communs a fili et fila
-    fili <- fili[out_i,]
-    ions=data.frame(paste(round(fili[[indmzi]],digit=4),round(fili[[indrti]],digit=0),sep="T"))
-    dimnames(ions)[[2]][1] <- "ions"
-    fili <- data.frame(ions,fili); write.table(fili,"fili.txt",sep="\t",row.names=FALSE)
-    
-    out_a <- c(common[,8])
-    ions <- data.frame(paste(round(fila[[indmza]],digit=4),round(fila[[indrta]],digit=0),sep="T"))
-    dimnames(ions)[[2]][1] <-"ions"
-    fila <- data.frame(ions,fila); 
-    fila <- fila[out_a,c(1,(indsa+1))]; write.table(fila,"fila.txt",sep="\t",row.names=FALSE)
-    filcor <- merge(fili,fila,by.x=1, by.y=1)    
-  }
-  #dimnames(common)[[2]]=c("mzi","mza","deltamz","deltamzppm","rti","rta","indici","indica")
-  write.table(common,"common_ions.txt",sep="\t",row.names=FALSE)
-  return(filcor)
-}
-
 deter_ioni <- function (aninfo, pm)
 {
   # determine l'ionisation de l'annotation de ProbMetab
@@ -376,133 +306,50 @@ vennSignif <- function(ids,sigsub,siglab,sigcol,chx=1.5)
       } else stop("Only 2 ou 3 factors are supported")
 }
 
-crea3files <- function(annotfile, vipfile, splfile, smtx, vipthresh, outfile) {
-   # This function creates the W4M 3 metadata + matrix files for univariate statistics
-   # annotfile: xcms xtract + annotation, ions in rows, columns= mz CAMERA intensities annotations
-   # vipfile : file of ions + vip n. These ions must be a subset of ions of annotfile
-   # splfile : file of sample(rows) + metadata samples. These samples must be a subset of samples of annotfile
-   # smtx : subscript of intensity values
-   # vip threshold : vipthresh <- 1
-   # outfile : out file common prefix name to create the 3 differents files
-   
-   annot <- read.table(file=annotfile,header=TRUE, sep="\t",stringsAsFactors =FALSE)
-   ## order by ions id which must be in the first column
-   annot <- annot[order(annot[[1]]),]
-   
-   vip <- read.table(file=vipfile,header=TRUE, sep="\t",stringsAsFactors =FALSE)
-   vip <- vip[order(vip[[1]]),]
-   if (sum(vip[,1] != annot[,1]) > 0) stop("ions id are different in vip and annot files")
-   
-   ## number of vip in vip files. 1st colum is ions id
-   nvip <- ncol(vip)-1
-   vipSig <- rep(0,nrow(vip))
-   
-   ## select significant vip (at least 1 vip > vip threshold)
-   
-   for (i in 1:nrow(vip)) for (j in 2:(nvip+1)) if (vip[i,j]> vipthresh) vipSig[i]<-1
-   vip <- vip[,-1]
-   annotAll <- cbind(annot,vip,vipSig)
-   colnames(annotAll)[ncol(annotAll)] <- paste(outfile,"vipSig",sep="_")
-   ## selection of significant ions on vipSig last column (last vipSig )
-   annot <-annotAll[annotAll[[ncol(annotAll)]] == 1,]
-   ions <- annot[[1]]
-   mtrx <- annot[,c(1,smtx)]
-   ## metadata variable contains just the names of ions and significance
-   mtvar <- annot[,c(1,ncol(annot))]; colnames(mtvar)[1] <- "ions"
-
-   # samples correspond to the samples in the data matrix provided
-   samples <- rownames(t(mtrx))[-1]
-   
-   ## load metadata sample file
-   spl <- read.table(file=splfile,header=TRUE, sep="\t",stringsAsFactors =FALSE)
-   
-   ## assess if the number of samples is the same in annot and metadata sample
-   ## and select the number of samples
-   ## there are more samples in annot and matrix than in sample metadata file
-   if (length(samples) >= length(spl[[1]])) {
-      selspl <- which(samples %in% spl[[1]])
-      mtrx <- data.frame(ions,mtrx[,selspl+1]) 
-   }
-   if (length(samples) < length(spl[[1]])) {
-      ## more samples in sample metadata than in annot xcms file (if stat were performed on a subset of data)
-      selspl <- which(spl[[1]] %in% samples)
-      spl <- spl[selspl,]
-   }
-   
-   ################################## create output files  ##################################
-   
-   write.table(mtrx,file=paste(outfile,"_matrix.txt",sep=""),sep="\t",col.names=TRUE,row.names=FALSE,quote=FALSE)
-   write.table(spl,file=paste(outfile,"_samples.txt",sep=""),sep="\t",col.names=TRUE,row.names=FALSE,quote=FALSE)
-   write.table(mtvar,file=paste(outfile,"_variable.txt",sep=""),sep="\t",col.names=TRUE,row.names=FALSE,quote=FALSE)
-   
-   return(annotAll)
-}
-
-##require(ggplot2)
-
-gboxplot <- function(ds2plot,pval=NA) {
-   
-   ## input dsplot is a dataframe with 3 colums 1st = id individual, 2nd=factor 3rd=intensity vector
-   ## pval is the pvalue for stat test among the levels of factor
-   
-   # ggplot(ds2plot, aes(x=ds2plot[[2]], y=ds2plot[[3]])) +
-   #    geom_boxplot(outlier.colour="red", outlier.shape=8, outlier.size=4)
-   par(cex=0.6)
-   boxplot(ds2plot[[3]] ~ ds2plot[[2]])
-   tit <- colnames(ds2plot)[3]
-   if (!is.na(pval)) tit <- paste(colnames(ds2plot)[3],pval, sep=" fdr=")
-   title(main = tit)
-
-}
-
-
-boxplotList_by <- function(sIndiv,sInt,sVar,fcs) {
-   ## sVar listes des ions significatifs (en ligne) pour une condition définie en amont 
-   # exemple ions résultant d'un VIP + test univarié significatif
-   ## sInt matrice d'intensités correspondante (ions en ligne) peut contenir toutes les ions de l'études
-   ## sIndiv : metadata des samples (peut contenir tous les samples de l'étude
-   # l'id des ions dans ces 2 dataframe doit etre en colonne 1
-   ## la fonction va construire une data frame correspondant à ces ions significatifs en colonnes et samples 
-   # correspondant en ligne pour faire des boxplots 
-   ## fcs indice du facteur à étudier dans sIndiv 
-   
-   ## réduction de la matrice d'intensité sInt aux ions de sVar et individus de sIndiv
-   selsamples <- which(colnames(sInt) %in% sIndiv[[1]])
-   dm <- sInt[,c(1,selsamples)]; row.names(dm) <- sInt[[1]]
-   
-   selions <- which(dm[[1]] %in% sVar[[1]] )
-   dm <- dm[selions,-1];
-   # on merge ions avec intensité et on ne garde que les ions présents dans sVar
-   
-   for (i in 1:ncol(dm)) {
-      vInt <- data.frame(colnames(dm), t(dm)[,i])
-      colnames(vInt)[2] <- rownames(dm)[i]
-      vInt <- merge(sIndiv[,c(1,fcs)],vInt,by.x=1, by.y=1)
-      gboxplot(vInt, sVar[i,2])
-   }
-}
-
-matrixSamples <- function(imtx,ispl) {
-  ## perform a selection of dataMatrix and sampleMetadata corresponding to 
-  ## biological samples : sampleType=="sample"
+crea3files <- function(vmfile, vipfile, splfile, dmfile, outsuf) {
+  # This function creates the W4M 3 metadata + matrix files for univariate statistics corresponding with significant VIP 
+  # vmfile: variableMetadata file with xcms xtract infos(annotation, ions in rows, columns= mz CAMERA intensities annotations
+  # vipfile : file of ions + vip n. These ions must be a subset of ions of vmfile, last column define the signifcance
+  # splfile : file of sample(rows) + metadata samples. These samples must be a subset of samples of vmfile
+  # dmfile : file of data matrix to be used for univariate test.
+  # outsuf : out file common prefix name to create the 3 differents files
   
-  ## selection of biological sample sampleType=="sample"
-  ## in the sampleMetadata ispl
-  ispl <- ispl[ispl$sampleType == "sample",]
-  dimispl <- ncol(ispl)
-  ## Selection of biological sample in the dataMatrix by merging with ispl
-  varName <- colnames(imtx)[1]
-  rownames(imtx) <- imtx[[1]]
-  imtx <- imtx[,-1]
-  Timtx <- t(imtx)
-  Timtx <- data.frame(row.names(Timtx),Timtx)
-  ids <- merge(x=ispl, y=Timtx, by.x=1, by.y=1, all.x=TRUE, all.y=FALSE)
-  row.names(ids) <- ids[[1]]
-  dms <- t(ids[,-c(1:dimispl)])
-  dms <- data.frame(row.names(dms),dms,stringsAsFactors = FALSE)
-  colnames(dms)[1] <- varName
-  DMSP <- list(dms,ispl)
-  return(DMSP)
+  ## read variable metadata file
+  VM <- read.table(file=vmfile,header=TRUE, sep="\t",stringsAsFactors =FALSE)
+  ## order by ions id which must be in the first column
+  VM <- VM[order(VM[[1]]),]
+  
+  VIP <- read.table(file=vipfile,header=TRUE, sep="\t",stringsAsFactors =FALSE)
+  VIP <- VIP[order(VIP[[1]]),]
+  if (sum(VIP[,1] != VM[,1]) > 0) stop("ions id are different in vip and annot files")
+  
+  ## selection of signifcant VIP ions, last column of VIP file
+  VIPsignif <- VIP[VIP[ncol(VIP)] == 1,] 
+  
+  ## merge to keep only signifcant ions
+  VMs <- merge(x = VM, y=VIPsignif, by.x=1, by.y =1, all.x=FALSE, all.y=TRUE)
+  ionsSignif <- VIPsignif[[1]]
+  
+  ## samples avec uniquement les sampleType ="sample"
+  SPL <- read.table(splfile, header=TRUE,sep="\t",stringsAsFactors = FALSE)
+  SPLs <- SPL[SPL$sampleType=="sample",]
+  splist <- SPLs[[1]]
+  
+  ## dataMatrix avec les ions signifs et les sampleType ="sample" uniquement et classés 
+  ## read table data matrix
+  DM <- read.table(file = dmfile, header = TRUE, sep="\t")
+  DM <- DM[order(DM[[1]]),]
+  ## on conserve les ions signifs
+  DMsignif <- DM[DM[[1]] %in% ionsSignif,]
+  DMSS <- data.frame(DMsignif[[1]],DMsignif[,colnames(DMsignif) %in% splist])
+  
+  ################################## create output files  ##################################
+  
+  write.table(DMSS,file=paste(outsuf,"DM.txt",sep=""), sep="\t",col.names=TRUE,row.names=FALSE,quote=FALSE)
+  write.table(SPLs,file=paste(outsuf,"SPL.txt",sep=""),sep="\t",col.names=TRUE,row.names=FALSE,quote=FALSE)
+  write.table(VMs, file=paste(outsuf,"VM.txt",sep=""), sep="\t",col.names=TRUE,row.names=FALSE,quote=FALSE)
+  
+  #return(annotAll)
 }
 
 
@@ -578,6 +425,80 @@ foldchange <- function(ids,reflev,collev=c(2:ncol(ids)), fctype=c("log2","simple
   
 }
 
+ggplotFC <- function(ids,labDEN,labNUM,sNAME,mtit,stit="log2 Fold change") {
+  ## function to ggplot a fold change (labNUM/labDEN) in descending order of absolute value
+  ## needs an input dataframe ids (var in rows and FC in columns) with all informations on average and FC
+  ## with at least 3 columns :
+  # - id in the first column
+  # - Name of the variable which is used on the plot
+  # - Fold change between labNUM/labDEM
+  
+  FC2plot <- paste(labNUM,"_vs_",labDEN,sep="")
+  sFC2plot <- which(colnames(ids)==FC2plot)
+  ids <- ids[,c(1,sNAME,sFC2plot)]
+  
+  mtitle <- paste(mtit,FC2plot, sep=" ")
+  
+  ## construct the name of the column to plot and then define his subscrip in log2FC
+  sens <- ifelse(ids[[3]] < 0, labDEN, labNUM) 
+  ids <- cbind(ids,sens)
+  
+  ### pour ordonner soit dans le sens decroissant de FC [[3]] soit par ordre alpha de name [[2]]
+  ids <- ids[order(abs(ids[[3]])),]
+  ## ids <- ids[order(ids[[2]]),]   
+  
+  colnames(ids)[3] <- "log2FC"
+  colnames(ids)[2] <- "name"
+  ids$name <- factor(ids$name, levels = ids$name) # convert to factor to retain sorted order in plot.
+  
+  ## ggplot of the foldchange
+  p <- ggplot(ids, aes(x=name, y=log2FC, label= log2FC)) + 
+    geom_bar(stat='identity', aes(fill=sens), width=.5)  +
+    #geom_text(aes(label = round(pvalue24h3DEM_vs_C,4)), nudge_y = 2) +
+    #scale_fill_manual(name="log2FC", labels = c(labDEN, labNUM), values = c(labDEN="green", labNUM="red")) +              
+    labs(subtitle=stit,  title= mtitle) + 
+    coord_flip()
+  
+  print(p)
+  
+}
+
+meanFCggplot <- function(VM,VMsel,DM,SPL,mfact,labDEN,labNUM,sNAME,mtit) {
+  
+  ## compute means of levels of factor mfact, then computes all the possible FC among levels of factor mfact
+  ## add these means and FC values to VM file and save it
+  ## Then between the chosen levels labNUM/labDEN for a selection of variable defined by the file VMsel
+  ## ggplot the fold change in descending order of the absolute values of FC
+  ## sNAME is the colum number defining the label of molecules uses on Y axis
+  
+  subfact <- which(colnames(SPL)==mfact)
+  moyDM <- moyByFactor(imtx=DM, ispl=SPL, subfact, onlyspl=TRUE, oper="mean") 
+  moyVM <- merge(x = VM, y =moyDM, by.x=1, by.y=1, all.x=TRUE, all.y=FALSE)
+  
+  # compute log2 fold change for all level = columns of moyVM corresponding to the means of the different levels
+  nlev <- ncol(x = moyDM) - 1
+  collev=c((ncol(moyVM)-nlev+1):ncol(moyVM))
+  lablev <- colnames(moyVM)[collev]
+  
+  ## for each level defined as denominator of FC, compute FC and store and write a txt file based on 
+  for (l in 1:nlev) {
+    FCDEN <- lablev[l]
+    FC <- foldchange(moyVM,reflev=FCDEN,collev, fctype="log2")
+    #subVM contains all the FC results for each level of the chosen factor mfact
+    moyVM <- cbind(moyVM,FC)
+    
+  }
+ 
+  ## for the mfact factor using 2 levels as Numerator and Denominator performs graphics of the fold change      
+  ## prepare dataframe for ploting. If exist 
+  if (!is.null(VMsel))  VMsel <- merge(x=VMsel, y=moyVM, by.x=1, by.y=1, all.x=TRUE, all.y=FALSE) else VMsel <- moyVM
+  
+  ggplotFC(ids=VMsel, labDEN=labDEN,labNUM=labNUM,sNAME,mtit=mtit, stit="log2 Fold change")
+  
+  return(VMsel)
+  
+}
+
 ggplotOR <- function(ids,sNAME=2,sOR=3,mtit,stit="Odd Ratio") {
   ## function to ggplot an Odd ratio in descending order 
   ##  needs an input dataframe ids with at least 3 columns :
@@ -602,76 +523,6 @@ ggplotOR <- function(ids,sNAME=2,sOR=3,mtit,stit="Odd Ratio") {
   print(p)
   
 }
-
-
-ggplotFC <- function(ids,labDEN,labNUM,sNAME,mtit,stit="log2 Fold change") {
-  ## function to ggplot a fold change (labNUM/labDEN) in descending order of absolute value
-  ## needs an input dataframe ids (var in rows and FC in columns) with all informations on average and FC
-  ## with at least 3 columns :
-  # - id in the first column
-  # - Name of the variable which is used on the plot
-  # - Fold change between labNUM/labDEM
-  
-  FC2plot <- paste(labNUM,"_vs_",labDEN,sep="")
-  sFC2plot <- which(colnames(ids)==FC2plot)
-  ids <- ids[,c(1,sNAME,sFC2plot)]
-  
-  mtitle <- paste(mtit,FC2plot, sep=" ")
-  
-  ## construct the name of the column to plot and then define his subscrip in log2FC
-  sens <- ifelse(ids[[3]] < 0, labDEN, labNUM) 
-  ids <- cbind(ids,sens)
-  ids <- ids[order(abs(ids[[3]])),]
-  colnames(ids)[3] <- "log2FC"
-  colnames(ids)[2] <- "name"
-  ids$name <- factor(ids$name, levels = ids$name) # convert to factor to retain sorted order in plot.
-  
-  ## ggplot of the foldchange
-  p <- ggplot(ids, aes(x=name, y=log2FC, label= log2FC)) + 
-    geom_bar(stat='identity', aes(fill=sens), width=.5)  +
-    #geom_text(aes(label = round(pvalue24h3DEM_vs_C,4)), nudge_y = 2) +
-    #scale_fill_manual(name="log2FC", labels = c(labDEN, labNUM), values = c(labDEN="green", labNUM="red")) +              
-    labs(subtitle=stit,  title= mtitle) + 
-    coord_flip()
-  
-  print(p)
-  
-}
-
-meanFCggplot <- function(VM,VMsel,DM,SPL,mfact,labDEN,labNUM,sNAME,mtit) {
-  
-  ## compute means of levels of factor mfact, then computes all the possible FC among levels of factor mfact
-  ## add these means and FC values to VM file and save it
-  ## Then between the chosen levels labNUM/labDEN for a selection of variable defined by the file VMsel
-  ## ggplot the fold change in descending order of the absolute values of FC
-  subfact <- which(colnames(SPL)==mfact)
-  moyDM <- moyByFactor(imtx=DM, ispl=SPL, subfact, onlyspl=TRUE, oper="mean") 
-  moyVM <- merge(x = VM, y =moyDM, by.x=1, by.y=1, all.x=TRUE, all.y=FALSE)
-  
-  # compute log2 fold change for all level = columns of moyVM corresponding to the means of the different levels
-  nlev <- ncol(x = moyDM) - 1
-  collev=c((ncol(moyVM)-nlev+1):ncol(moyVM))
-  lablev <- colnames(moyVM)[collev]
-  
-  ## for each level defined as denominator of FC, compute FC and store and write a txt file based on 
-  for (l in 1:nlev) {
-    FCDEN <- lablev[l]
-    FC <- foldchange(moyVM,reflev=FCDEN,collev, fctype="log2")
-    #subVM contains all the FC results for each level of the chosen factor mfact
-    moyVM <- cbind(moyVM,FC)
-    
-  }
- 
-  ## for the mfact factor using 2 levels as Numerator and Denominator performs graphics of the fold change      
-  ## prepare dataframe for ploting. If exist 
-  if (!is.null(VMsel))  VMsel <- merge(x=VMsel, y=moyVM, by.x=1, by.y=1, all.x=TRUE, all.y=FALSE) else VMsel <- moyVM
-  
-  ggplotFC(ids=VMsel, labDEN=labDEN,labNUM=labNUM,sNAME=sNAME,mtit=mtit, stit="log2 Fold change")
-  
-  return(VMsel)
-  
-}
-
 
 
 parse_chemFormula <- function(formul, atom2search=c("C","H","O","N","S")) {
@@ -743,7 +594,7 @@ plot_prince <- function(ids,spl,s_var,s_fact, nbcomp) {
 molobsfreq <- function(vmdata,dm, spl,nTimeBL=10, intThreshold=0,freqBy=0,iId=1) {
    ## This function computes the observed frequency of the differents ions of a peaklist
    ## Threshold is defined as nTimeBL*average of non zero blank value (nTimeBL) or an abosulte value (nTimeBL=0 and intThreshold=absolute value of threshold)
-   ## for each ion: freq <- 1-(number of samples with intensity>intThreshold / number of samples)
+   ## for each ion: freq <- 1-(number of samples with intensity<intThreshold / number of samples)
    ## This freq can be computed for all samples or by levels of a factor (freqBy = subscript of the factor)
    ## use the 3 W4M files vmdata : var metadata , dm : dataMatrix, spl : sample metadata
    ## iId : subscript of ID var vmdata
@@ -759,20 +610,20 @@ molobsfreq <- function(vmdata,dm, spl,nTimeBL=10, intThreshold=0,freqBy=0,iId=1)
    splonly <- dsf[dsf$sampleType=="sample",]
    if (freqBy >0) {
       levby <- as.character(levels(as.factor(splonly[[freqBy]])) )
-      nlev <- nlevels(as.factor(splonly[[freqBy]])) 
+      nlev  <- nlevels(as.factor(splonly[[freqBy]])) 
    } else
    {
       levby <- "Freq"
       nlev=1
    }
    
-   ## extract blank only to compute average non zero sample to define the threshol by multiplying this average by nTimeBL
+   ## extract only blank to compute an average of non zero sample to define the threshold by multiplying this average by nTimeBL
    if (nTimeBL > 0){ 
       thresh <- rep(NA,lastvar - firstvar +1)
       blonly <- dsf[dsf$sampleType=="blank",]
       for(j in firstvar:lastvar) {
          inz <- which(blonly[[j]]>0)
-         ## if all blank =0 then threshold is fixed to n
+         ## if all blank =0 then threshold is fixed to nTimeBL * intThreshold
          if (length(inz)==0) thresh[j-firstvar+1] <- nTimeBL * intThreshold
             else thresh[j-firstvar+1] <- nTimeBL*mean(blonly[inz,j]) 
       }
@@ -807,8 +658,9 @@ molobsfreq <- function(vmdata,dm, spl,nTimeBL=10, intThreshold=0,freqBy=0,iId=1)
          max1 <- rep(0,nlev)
          for (p in 1:nlev) {
             sublev <- subds[subds[[freqBy]]== levby[p],]
+            ## number of sample < threshold
             nul1[p] <- nrow(sublev[sublev[[sv]]< thresh[i],])
-            ## frequency 
+            ## frequency : 1 - taux d'inferieur au seuil
             nul1[p] <- (1-(nul1[p]/nrow(subds[subds[[freqBy]]== levby[p],])))
             ## intensity
             int1[p] <- median(sublev[sublev[[sv]]>= thresh[i],sv])
@@ -821,21 +673,12 @@ molobsfreq <- function(vmdata,dm, spl,nTimeBL=10, intThreshold=0,freqBy=0,iId=1)
       }  else 
       {
          nul1 <- 1-(nrow(subds[subds[[sv]]< thresh[i],])/nrow(subds))
-         int1 <- median(subds[subds[[sv]] >= thresh[i],])
+         int1 <- median(subds[subds[[sv]] >= thresh[i],sv])
          if (min(subds[[sv]]) < thresh[i]) min1 <- thresh[i] 
          else min1 <- min <- thresh[i]
          max1 <- max(subds[[sv]])
          
       }
-      
-      # ## mean by level factor
-      # moy1 <- rep(NA,nlev)
-      # moy1 <- tapply(splonly[[sv]], splonly[[freqBy]], mean)
-      # 
-      # ## median by level factor
-      # med1 <- rep(NA,nlev)
-      # med1 <- tapply(splonly[[sv]], splonly[[freqBy]], median)
-      # 
       ## results 
       resFreq[i,1] <- ions
       resFreq[i,c(2:(ncol(resFreq)))] <- nul1
@@ -846,7 +689,7 @@ molobsfreq <- function(vmdata,dm, spl,nTimeBL=10, intThreshold=0,freqBy=0,iId=1)
       resMax[i,1] <- ions
       resMax[i,c(2:(ncol(resMax)))] <- max1
       
-      cat(resFreq[i,1],"\n")
+      #cat(resFreq[i,1],"\n")
    }
    #resFI <- merge(x=resFreq,y=resInt,by.x=1,by.y=1,all.x=TRUE,all.y=TRUE)
    resFI <- cbind(resFreq, resInt, resMin, resMax)
@@ -1060,20 +903,6 @@ xcms_xtract <- function(ioniUsed,pgen,pioni,spl,idmanip,repIoni) {
    return(allres)
 }
 
-
-crea.SIMCAfile <- function(VM,DM,spl) {
-   
-   ## save SIMCA file : sample in rows and features (ions) in columns
-
-   nbsamples <- ncol(DM)-1
-   if (nbsamples != nrow(spl)) {stop("Le nombre de sample different entre DataMatrix et sampleMetadata")}
-   DMi <- DM[,-1]; row.names(DMi) <- DM[[1]]
-   nbions <- nrow(DMi)
-   tDM <- t(DMi); tDM <- data.frame(row.names(tDM),tDM, stringsAsFactors = FALSE)
-   DMsimca <- merge(x=spl, y=tDM, by.x=1, by.y=1, all.x=TRUE, all.y=TRUE)
-   
-   return(DMsimca)
-}
 
 computeCV <- function(VM,DMsimca,spl) {
    
